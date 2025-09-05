@@ -1,0 +1,24 @@
+{
+  "name": "material-voxel-renderer",
+  "version-string": "1.0.0",
+  "description": "A voxel renderer using material design principles.",
+  "license": "MIT",
+  "homepage": "https://github.com/GengGode/material-voxel-renderer",
+  "dependencies": [
+    "cereal",
+    "fmt",
+    "spdlog",
+    "glm",
+    "glfw3",
+    "glad",
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "glfw-binding",
+        "opengl3-binding"
+      ]
+    },
+    "implot"
+  ]
+}
