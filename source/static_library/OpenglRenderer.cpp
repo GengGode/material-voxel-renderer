@@ -6,6 +6,8 @@
 
 #include <GLFW/glfw3.h>
 
+#include "interface/implement/OpenglCommandQueue.hpp"
+
 void error_callback(int error, const char* description)
 {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -19,7 +21,7 @@ int OpenglRenderer::initialize()
 
     // Request an OpenGL 4.1, core, context from GLFW.
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     // Create a window on the operating system, then tie the OpenGL context to it.
@@ -31,6 +33,9 @@ int OpenglRenderer::initialize()
     // Start Glad, so we can call OpenGL functions.
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
         return code_err("{}: Failed to initialize OpenGL context", __func__);
+
+    command_queue_on_begin = std::make_shared<OpenglCommandQueue>();
+    command_queue_on_swap_before = std::make_shared<OpenglCommandQueue>();
 
     float vertices[] = { -0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f };
     unsigned int vertices_buffer_object;
@@ -57,7 +62,7 @@ int OpenglRenderer::initialize()
     if (!success)
     {
         glGetShaderInfoLog(vertex_shader, 512, nullptr, info_log);
-        spdlog::error("{}: Vertex shader compilation failed: {}", __func__, info_log);
+        SPDLOG_ERROR("Vertex shader compilation failed: {}", info_log);
         return -1;
     }
 
@@ -78,7 +83,7 @@ int OpenglRenderer::initialize()
     if (!success)
     {
         glGetShaderInfoLog(fragment_shader, 512, nullptr, info_log);
-        spdlog::error("{}: Fragment shader compilation failed: {}", __func__, info_log);
+        SPDLOG_ERROR("Fragment shader compilation failed: {}", info_log);
         return -1;
     }
 
@@ -90,7 +95,7 @@ int OpenglRenderer::initialize()
     if (!success)
     {
         glGetProgramInfoLog(user_shader_program, 512, nullptr, info_log);
-        spdlog::error("{}: Shader program linking failed: {}", __func__, info_log);
+        SPDLOG_ERROR("Shader program linking failed: {}", info_log);
         return -1;
     }
     glDeleteShader(vertex_shader);
@@ -120,6 +125,9 @@ void OpenglRenderer::render_loop(std::stop_token& token)
             continue;
         }
 
+        command_queue_on_begin->consume();
+
+        glViewport(0, 0, 1280, 800);
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -127,8 +135,9 @@ void OpenglRenderer::render_loop(std::stop_token& token)
         glUseProgram(user_shader_program);
         glBindVertexArray(user_vertex_array_object);
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0);
+        // glBindVertexArray(0);
 
+        command_queue_on_swap_before->consume();
         // Put the stuff we've been drawing onto the visible area.
         glfwSwapBuffers(glfw_window);
     }
@@ -143,8 +152,61 @@ void OpenglRenderer::destroy()
 void OpenglRenderer::set_vertex_shader(const std::string& source)
 {
     vertex_shader_source = source;
+    command_queue_on_begin->enqueue([this]() { this->compile_shaders(); });
 }
 void OpenglRenderer::set_fragment_shader(const std::string& source)
 {
     fragment_shader_source = source;
+    command_queue_on_begin->enqueue([this]() { this->compile_shaders(); });
+}
+
+void OpenglRenderer::compile_shaders()
+{
+    if (vertex_shader_source.empty() || fragment_shader_source.empty())
+        return;
+
+    uint32_t vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+    const char* vertex_source_cstr = vertex_shader_source.c_str();
+    glShaderSource(vertex_shader, 1, &vertex_source_cstr, nullptr);
+    glCompileShader(vertex_shader);
+
+    int success;
+    char info_log[512];
+    glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(vertex_shader, 512, nullptr, info_log);
+        SPDLOG_ERROR("Vertex shader compilation failed: {}", info_log);
+        return;
+    }
+
+    uint32_t fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+    const char* fragment_source_cstr = fragment_shader_source.c_str();
+    glShaderSource(fragment_shader, 1, &fragment_source_cstr, nullptr);
+    glCompileShader(fragment_shader);
+    glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(fragment_shader, 512, nullptr, info_log);
+        SPDLOG_ERROR("Fragment shader compilation failed: {}", info_log);
+        return;
+    }
+
+    uint32_t new_shader_program = glCreateProgram();
+    glAttachShader(new_shader_program, vertex_shader);
+    glAttachShader(new_shader_program, fragment_shader);
+    glLinkProgram(new_shader_program);
+    glGetProgramiv(new_shader_program, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+        glGetProgramInfoLog(new_shader_program, 512, nullptr, info_log);
+        SPDLOG_ERROR("Shader program linking failed: {}", info_log);
+        return;
+    }
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    if (user_shader_program != 0)
+        glDeleteProgram(user_shader_program);
+    user_shader_program = new_shader_program;
 }

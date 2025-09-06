@@ -1,7 +1,7 @@
 #pragma once
 #include "interface/ImFramerInterface.hpp"
 
-class OpenglFramer : public ImFramerInterface
+class OpenglComputeShaderFramer : public ImFramerInterface
 {
 public:
     int initialize() override;

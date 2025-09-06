@@ -31,7 +31,9 @@ target_sources(material-voxel-renderer.static
         Executor.cpp
         ImRenderer.cpp
         OpenglRenderer.cpp
-        OpenglFramer.cpp
+        OpenglImRenderer.cpp
+        OpenglRasterizationFramer.cpp
+        OpenglComputeShaderFramer.cpp
 )
 
 target_link_libraries(material-voxel-renderer.static

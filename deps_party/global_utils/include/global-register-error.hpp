@@ -76,8 +76,8 @@ namespace global
 
 #if defined(HAS_SPDLOG)
     #undef HAS_SPDLOG
-    #define code_err(msg, ...) (spdlog::error(msg __VA_OPT__(, ) __VA_ARGS__), register_error(msg))
-    #define flag_err(msg, ...) (spdlog::error(msg __VA_OPT__(, ) __VA_ARGS__), register_error(msg), false)
+    #define code_err(msg, ...) (SPDLOG_ERROR(msg __VA_OPT__(, ) __VA_ARGS__), register_error(msg))
+    #define flag_err(msg, ...) (SPDLOG_ERROR(msg __VA_OPT__(, ) __VA_ARGS__), register_error(msg), false)
 #else
     #define code_err(msg, ...) register_error(msg)
     #define flag_err(msg, ...) (register_error(msg) == 0)
