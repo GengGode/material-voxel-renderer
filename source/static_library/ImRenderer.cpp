@@ -61,7 +61,7 @@ int ImRenderer::initialize()
 
     if (framer)
         if (int ret = framer->initialize(); ret != 0)
-            return code_err("{}: Failed to initialize framer, ret={}", __func__, ret);
+            return code_err("Failed to initialize framer, ret={}", ret);
     return 0;
 }
 
