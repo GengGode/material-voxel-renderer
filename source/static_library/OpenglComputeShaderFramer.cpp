@@ -94,8 +94,8 @@ layout (rgba8, binding = 0) writeonly uniform image2D output_texture;
 
 // 输入纹理
 uniform sampler2D color_table_tex;
-uniform sampler3D vol_le_tex;
-uniform sampler3D vol_he_tex;
+uniform usampler3D vol_le_tex;
+uniform usampler3D vol_he_tex;
 uniform float time;
 
 // 相机结构体
@@ -112,14 +112,14 @@ void main() {
         return;
 
     // 示例：从 3D 体数据采样
-    vec3 vol_coord = vec3(0.5,
+    vec3 vol_coord = vec3(float(pixel.x) / float(imageSize(output_texture).x),
                           float(pixel.y) / float(imageSize(output_texture).y),
                           0.5); // 中间切片
 
-    float le_val = texture(vol_le_tex, vol_coord).r ;
-    float he_val = texture(vol_he_tex, vol_coord).r ;
+    uint le_val = texture(vol_le_tex, vol_coord).r ;
+    uint he_val = texture(vol_he_tex, vol_coord).r ;
 
-    vec4 color = vec4(le_val, he_val, 0.0, 1.0);
+    vec4 color = vec4(le_val / 65535.0, he_val / 65535.0, 0.0, 1.0);
     //vec4 color = texture(color_table_tex, pixel / vec2(imageSize(output_texture)));
     imageStore(output_texture, pixel, color);
     //imageStore(output_texture, pixel, vec4(float(pixel.x) / float(imageSize(output_texture).x), float(pixel.y) / float(imageSize(output_texture).y), 0.5, 1.0));
@@ -198,7 +198,7 @@ GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width,
         layout (local_size_x = 16, local_size_y = 16) in;
 
         layout (rgba8, binding = 0) writeonly uniform image2D output_tex;
-        uniform sampler3D tex3d;
+        uniform usampler3D tex3d;
         uniform int axis;   // 0=x, 1=y, 2=z
         uniform float slice; // 0~1
 
@@ -215,8 +215,9 @@ GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width,
             else if (axis == 1)  coord = vec3(uv.x, slice, uv.y);
             else                 coord = vec3(uv, slice);
 
-            vec4 color = texture(tex3d, coord);
-            imageStore(output_tex, pixel, color);
+            uint color = texture(tex3d, coord).r;
+            float fcolor = color / 65535.0;
+            imageStore(output_tex, pixel, vec4(fcolor, fcolor, fcolor, 1.0));
         }
 )";
 
@@ -297,7 +298,7 @@ void OpenglComputeShaderFramer::next_frame()
     ImGui::SliderInt("Axis", &axis, 0, 2);
     ImGui::SliderFloat("Slice", &slice, 0.0f, 1.0f);
 
-    GLuint preview_tex = render_3d_texture_preview(vol_tex, axis, slice, 256, 256);
+    GLuint preview_tex = render_3d_texture_preview(vol_le_tex, axis, slice, 256, 256);
     ImGui::Image((ImTextureID)(intptr_t)preview_tex, ImVec2(256, 256), ImVec2(0, 1), ImVec2(1, 0));
     ImGui::End();
 
