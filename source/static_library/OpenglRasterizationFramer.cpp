@@ -267,12 +267,26 @@ void init()
 {
     global::onlyone::create<texture_pool>();
 
+    auto rand_memory = [](auto& mem) {
+        for (auto& v : mem)
+            v = static_cast<std::remove_reference_t<decltype(v)>>(rand() % 256);
+    };
+    rand_memory(color_table.memory);
+    rand_memory(vol_le.memory);
+    rand_memory(vol_he.memory);
+    rand_memory(vol.memory);
+
+    color_table_tex = texture_from(color_table);
+    vol_le_tex = texture_from(vol_le);
+    vol_he_tex = texture_from(vol_he);
+    vol_tex = texture_from(vol);
 
     global::onlyone::call<texture_pool>([&](texture_pool& pool) {
         pool.insert(vol_le_tex);
         pool.insert(vol_he_tex);
         return true;
     });
+
     float vertices[] = { -0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f };
     unsigned int vertices_buffer_object;
     glGenBuffers(1, &vertices_buffer_object);
@@ -286,12 +300,12 @@ void init()
         layout (location = 2) in vec2 texcoord;
         uniform mat4 view;
         uniform mat4 projection;
-        out vec2 out_TexCoord;
+        out vec2 ver_TexCoord;
 
         void main()
         {
             gl_Position = projection * view * vec4(position, 1.0);
-            out_TexCoord = texcoord;
+            ver_TexCoord = texcoord;
         }
     )";
     shader_t vertex_shader = glCreateShader(GL_VERTEX_SHADER);
@@ -307,10 +321,12 @@ void init()
         uniform sampler2D color_table_texture;
         out vec4 FragColor;
 
+        in vec2 ver_TexCoord;
+
         void main()
         {
             float brightness = time - floor(time);
-            FragColor = vec4(0.6, 0.5, brightness, 1.0);
+            FragColor = vec4(vec3(ver_TexCoord, 0.2) * brightness, 1.0);
         }
     )";
 
@@ -338,6 +354,95 @@ void init()
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 }
+static inline GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width, int height, bool force_update = false)
+{
+
+    static GLuint program = 0;
+    static GLuint output_tex = 0;
+    static int last_preview_axis = -1;
+    static float last_preview_slice = -1.0f;
+
+    bool is_changed = (axis != last_preview_axis) || (std::abs(slice - last_preview_slice) > 0.001f);
+    if (!is_changed && !force_update)
+        return output_tex;
+
+    last_preview_axis = axis;
+    last_preview_slice = slice;
+
+    if (program == 0)
+    {
+        const char* cs_src = R"(
+        #version 430
+        layout (local_size_x = 16, local_size_y = 16) in;
+
+        layout (rgba8, binding = 0) writeonly uniform image2D output_tex;
+        uniform usampler3D tex3d;
+        uniform int axis;   // 0=x, 1=y, 2=z
+        uniform float slice; // 0~1
+
+        void main() {
+            ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+            ivec2 size2d = imageSize(output_tex);
+            if (pixel.x >= size2d.x || pixel.y >= size2d.y)
+                return;
+
+            vec2 uv = vec2(pixel) / vec2(size2d);
+
+            vec3 coord;
+            if (axis == 0)       coord = vec3(slice, uv);
+            else if (axis == 1)  coord = vec3(uv.x, slice, uv.y);
+            else                 coord = vec3(uv, slice);
+
+            uint color = texture(tex3d, coord).r;
+            float fcolor = color / 255.0;
+            imageStore(output_tex, pixel, vec4(fcolor, fcolor, fcolor, 1.0));
+        }
+        )";
+
+        GLuint cs = glCreateShader(GL_COMPUTE_SHADER);
+        glShaderSource(cs, 1, &cs_src, nullptr);
+        glCompileShader(cs);
+        GLint success;
+        glGetShaderiv(cs, GL_COMPILE_STATUS, &success);
+        if (!success)
+        {
+            char log[1024];
+            glGetShaderInfoLog(cs, 1024, nullptr, log);
+            SPDLOG_ERROR("Compute Shader Error: {}", log);
+        }
+
+        program = glCreateProgram();
+        glAttachShader(program, cs);
+        glLinkProgram(program);
+        glDeleteShader(cs);
+    }
+
+    if (output_tex == 0)
+    {
+        glGenTextures(1, &output_tex);
+        glBindTexture(GL_TEXTURE_2D, output_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    glUseProgram(program);
+
+    glBindImageTexture(0, output_tex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, tex3d);
+    glUniform1i(glGetUniformLocation(program, "tex3d"), 0);
+    glUniform1i(glGetUniformLocation(program, "axis"), axis);
+    glUniform1f(glGetUniformLocation(program, "slice"), slice);
+
+    glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+    return output_tex;
+}
+
 void update()
 {
     static float time = 0.0f;
@@ -435,6 +540,36 @@ void OpenglRasterizationFramer::next_frame()
     ImGui::Begin("Preview", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     if (render_texture != 0)
         ImGui::Image((ImTextureID)(intptr_t)render_texture, ImVec2(view_width, view_height), ImVec2(0, 1), ImVec2(1, 0));
+    ImGui::End();
+    static texture_t selected_preview_tex = 0;
+    bool force_update = false;
+    {
+        ImGui::Begin("3D Texture List", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        global::onlyone::call<texture_pool>([&](texture_pool& pool) {
+            for (const auto& tex : pool)
+            {
+                if (ImGui::Button(fmt::format("Texture {}", tex).c_str()))
+                {
+                    selected_preview_tex = tex;
+                    force_update = true;
+                }
+            }
+            return true;
+        });
+        ImGui::End();
+    }
+
+    ImGui::Begin("3D Texture Preview");
+    static int preview_axis = 2; // 默认 z 方向
+    static float preview_slice = 0.5f;
+    ImGui::SliderInt("Axis", &preview_axis, 0, 2);
+    ImGui::SliderFloat("Slice", &preview_slice, 0.0f, 1.0f);
+
+    if (selected_preview_tex != 0)
+    {
+        GLuint preview_tex = render_3d_texture_preview(selected_preview_tex, preview_axis, preview_slice, 640, 640, force_update);
+        ImGui::Image((ImTextureID)(intptr_t)preview_tex, ImVec2(640, 640), ImVec2(0, 1), ImVec2(1, 0));
+    }
     ImGui::End();
 }
 
