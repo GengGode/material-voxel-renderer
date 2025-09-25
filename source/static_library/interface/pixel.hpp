@@ -15,9 +15,19 @@ template <typename T> struct pixel
 
 template <typename T> static inline pixel<T> make_pixel(glm::ivec2 size)
 {
-    pixel<T> vox;
-    vox.size = size;
-    vox.memory.resize(size.x * size.y);
-    vox.view = std::mdspan<T, std::dextents<int, 2>>(vox.memory.data(), size.y, size.x);
-    return vox;
+    pixel<T> pix;
+    pix.size = size;
+    pix.memory.resize(size.x * size.y);
+    pix.view = std::mdspan<T, std::dextents<int, 2>>(pix.memory.data(), size.y, size.x);
+    return pix;
+}
+template <typename T> static inline pixel<T> make_pixel(glm::ivec2 size, std::span<T> source)
+{
+    pixel<T> pix;
+    pix.size = size;
+    pix.memory.resize(size.x * size.y);
+    pix.view = std::mdspan<T, std::dextents<int, 2>>(pix.memory.data(), size.y, size.x);
+    size_t copy_size = std::min(source.size(), pix.memory.size());
+    std::copy_n(source.data(), copy_size, pix.memory.data());
+    return pix;
 }
