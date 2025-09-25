@@ -69,7 +69,7 @@ void ImRenderer::render_loop(std::stop_token& token)
 {
     auto glfw_window = window.get();
 
-    bool show_demo_window = true;
+    bool show_demo_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
     // Rendering loop code for ImRenderer
@@ -87,18 +87,19 @@ void ImRenderer::render_loop(std::stop_token& token)
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // 点击左上角100，100范围内3次，显示调试窗口
+        if (ImGui::IsMouseClicked(0) && ImGui::GetMousePos().x < 100 && ImGui::GetMousePos().y < 100)
+        {
+            static int click_count = 0;
+            if (++click_count >= 3)
+                show_demo_window = !show_demo_window, click_count = 0;
+        }
+
         if (show_demo_window)
             ImGui::ShowDemoWindow(&show_demo_window);
 
         if (framer)
             framer->next_frame();
-
-        ImGui::Begin("中文测试!"); // Create a window called "Hello, world!" and append into it.
-
-        ImGui::Text("This is some useful text.");          // Display some text (you can use a format strings too)
-        ImGui::Checkbox("Demo Window", &show_demo_window); // Edit bools storing our window open/close state
-        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-        ImGui::End();
 
         // Rendering
         ImGui::Render();
