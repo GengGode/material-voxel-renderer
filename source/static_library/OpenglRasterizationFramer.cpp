@@ -1,12 +1,15 @@
 #include "OpenglRasterizationFramer.hpp"
 
-#include <spdlog/spdlog.h>
-
 #include <global-register-error.hpp>
-
-#include <glad/glad.h>
+#include <global-variables-pool.hpp>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include <spdlog/spdlog.h>
+
+#include <glad/glad.h>
 
 #include <imgui.h>
 #include <implot.h>
@@ -15,19 +18,32 @@
 #include "interface/voxel.hpp"
 #include "texture_from.hpp"
 
-static pixel<uint32_t> color_table = make_pixel<uint32_t>({ 256, 256 });
-static voxel<uint16_t> vol = make_voxel<uint16_t>({ 3, 3, 3 });
-
-static uint16_t view_width = 800;
-static uint16_t view_height = 600;
-static uint32_t user_framebuffer_id = 0;
-static uint32_t user_framebuffer_texture_id = 0;
-static uint32_t user_shader_program = 0;
-static uint32_t user_vertex_array_object = 0;
+#include <set>
 
 using texture_t = uint32_t;
 using shader_t = uint32_t;
 using program_t = uint32_t;
+
+using texture_pool = std::set<texture_t>;
+
+static texture_t color_table_tex = 0;
+static texture_t vol_le_tex = 0;
+static texture_t vol_he_tex = 0;
+static texture_t vol_tex = 0;
+
+static pixel<uint32_t> color_table = make_pixel<uint32_t>({ 256, 256 });
+// Equivalent thickness and equivalent atomic number
+// attenuation coefficient
+static voxel<uint16_t> vol_le = make_voxel<uint16_t>({ 64, 64, 64 });
+static voxel<uint16_t> vol_he = make_voxel<uint16_t>({ 64, 64, 64 });
+static voxel<uint8_t> vol = make_voxel<uint8_t>({ 64, 64, 64 });
+
+static uint16_t view_width = 800;
+static uint16_t view_height = 600;
+static texture_t render_texture = 0;
+static program_t user_program = 0;
+static uint32_t user_framebuffer_id = 0;
+static uint32_t user_vertex_array_object = 0;
 
 static inline bool check_compile_errors(shader_t shader, std::source_location loc = std::source_location::current())
 {
@@ -58,6 +74,14 @@ static inline bool check_link_errors(program_t program, std::source_location loc
 
 void init()
 {
+    global::onlyone::create<texture_pool>();
+
+
+    global::onlyone::call<texture_pool>([&](texture_pool& pool) {
+        pool.insert(vol_le_tex);
+        pool.insert(vol_he_tex);
+        return true;
+    });
     float vertices[] = { -0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f };
     unsigned int vertices_buffer_object;
     glGenBuffers(1, &vertices_buffer_object);
@@ -99,11 +123,11 @@ void init()
     if (!check_compile_errors(fragment_shader))
         return;
 
-    user_shader_program = glCreateProgram();
-    glAttachShader(user_shader_program, vertex_shader);
-    glAttachShader(user_shader_program, fragment_shader);
-    glLinkProgram(user_shader_program);
-    if (!check_link_errors(user_shader_program))
+    user_program = glCreateProgram();
+    glAttachShader(user_program, vertex_shader);
+    glAttachShader(user_program, fragment_shader);
+    glLinkProgram(user_program);
+    if (!check_link_errors(user_program))
         return;
     glDeleteShader(vertex_shader);
     glDeleteShader(fragment_shader);
@@ -121,8 +145,8 @@ void update()
 {
     static float time = 0.0f;
     time += 0.01f;
-    glUniform1f(glGetUniformLocation(user_shader_program, "time"), time);
-    glUseProgram(user_shader_program);
+    glUniform1f(glGetUniformLocation(user_program, "time"), time);
+    glUseProgram(user_program);
     glBindVertexArray(user_vertex_array_object);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
@@ -130,8 +154,8 @@ void uninit()
 {
     if (user_vertex_array_object != 0)
         glDeleteVertexArrays(1, &user_vertex_array_object);
-    if (user_shader_program != 0)
-        glDeleteProgram(user_shader_program);
+    if (user_program != 0)
+        glDeleteProgram(user_program);
 }
 
 int OpenglRasterizationFramer::initialize()
@@ -139,15 +163,15 @@ int OpenglRasterizationFramer::initialize()
     glGenFramebuffers(1, &user_framebuffer_id);
     glBindFramebuffer(GL_FRAMEBUFFER, user_framebuffer_id);
 
-    glGenTextures(1, &user_framebuffer_texture_id);
-    glBindTexture(GL_TEXTURE_2D, user_framebuffer_texture_id);
+    glGenTextures(1, &render_texture);
+    glBindTexture(GL_TEXTURE_2D, render_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, view_width, view_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, user_framebuffer_texture_id, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, render_texture, 0);
     if (GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER); status != GL_FRAMEBUFFER_COMPLETE)
-        return code_err("Framebuffer is not complete! (status: {})", status);
+        return code_err("Framebuffer is not complete! (status: {})", (int)status);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     init();
@@ -169,16 +193,16 @@ void OpenglRasterizationFramer::next_frame()
 
     // ImGui::SetNextWindowSize(ImVec2(820, 620), ImGuiCond_Once);
     ImGui::Begin("Preview", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    if (user_framebuffer_texture_id != 0)
-        ImGui::Image((ImTextureID)(intptr_t)user_framebuffer_texture_id, ImVec2(view_width, view_height), ImVec2(0, 1), ImVec2(1, 0));
+    if (render_texture != 0)
+        ImGui::Image((ImTextureID)(intptr_t)render_texture, ImVec2(view_width, view_height), ImVec2(0, 1), ImVec2(1, 0));
     ImGui::End();
 }
 
 void OpenglRasterizationFramer::destroy()
 {
     uninit();
-    if (user_framebuffer_texture_id != 0)
-        glDeleteTextures(1, &user_framebuffer_texture_id);
+    if (render_texture != 0)
+        glDeleteTextures(1, &render_texture);
     if (user_framebuffer_id != 0)
         glDeleteFramebuffers(1, &user_framebuffer_id);
 }

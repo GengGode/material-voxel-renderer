@@ -23,8 +23,8 @@ int main(int, char**)
     auto im_renderer = std::make_shared<ImRenderer>();
     auto rasterization_framer = std::make_shared<OpenglRasterizationFramer>();
     im_renderer->set_framer(rasterization_framer);
-    auto compute_shader_framer = std::make_shared<OpenglComputeShaderFramer>();
-    im_renderer->set_framer(compute_shader_framer);
+    // auto compute_shader_framer = std::make_shared<OpenglComputeShaderFramer>();
+    // im_renderer->set_framer(compute_shader_framer);
 
     auto opengl_renderer = std::make_shared<OpenglRenderer>();
     auto opengl_im_renderer = std::make_shared<OpenglImRenderer>();

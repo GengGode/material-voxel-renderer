@@ -1,8 +1,8 @@
 #include "OpenglComputeShaderFramer.hpp"
+#include <global-register-error.hpp>
+#include <global-variables-pool.hpp>
 
 #include <spdlog/spdlog.h>
-
-#include <global-register-error.hpp>
 
 #include <glad/glad.h>
 
@@ -14,6 +14,8 @@
 #include "interface/pixel.hpp"
 #include "interface/voxel.hpp"
 #include "texture_from.hpp"
+
+#include <set>
 
 static pixel<uint32_t> color_table = make_pixel<uint32_t>({ 256, 256 });
 // Equivalent thickness and equivalent atomic number
@@ -65,26 +67,23 @@ static inline bool check_link_errors(program_t program, std::source_location loc
     return true;
 }
 
+using texture_pool = std::set<texture_t>;
+
 void compute_shader_init()
 {
-    for (auto y = 0; y < 256; y++)
-        for (auto x = 0; x < 256; x++)
-        {
-            if (x > 255 - y)
-                color_table(x, y) = (255 << 24) | (y << 16) | (y << 8) | (255);
-            else
-                color_table(x, y) = (255 << 24) | (0 << 16) | (0 << 8) | (0);
-        }
-    for (auto& v : vol_le.memory)
-        v = rand() % 65535;
-    for (auto& v : vol_he.memory)
-        v = rand() % 65535;
-    for (auto& v : vol.memory)
-        v = rand() % 255;
+    global::onlyone::create<texture_pool>();
+
     color_table_tex = texture_from(color_table);
     vol_le_tex = texture_from(vol_le);
     vol_he_tex = texture_from(vol_he);
     vol_tex = texture_from(vol);
+
+    global::onlyone::call<texture_pool>([&](texture_pool& pool) {
+        pool.insert(vol_le_tex);
+        pool.insert(vol_he_tex);
+        return true;
+    });
+
     const char* compute_shader_source = R"(
 #version 430
 layout (local_size_x = 16, local_size_y = 16) in;
@@ -186,10 +185,20 @@ void compute_shader_uninit()
     if (user_program != 0)
         glDeleteProgram(user_program);
 }
-GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width, int height)
+GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width, int height, bool force_update = false)
 {
+
     static GLuint program = 0;
     static GLuint output_tex = 0;
+    static int last_preview_axis = -1;
+    static float last_preview_slice = -1.0f;
+
+    bool is_changed = (axis != last_preview_axis) || (std::abs(slice - last_preview_slice) > 0.001f);
+    if (!is_changed && !force_update)
+        return output_tex;
+
+    last_preview_axis = axis;
+    last_preview_slice = slice;
 
     if (program == 0)
     {
@@ -219,7 +228,7 @@ GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width,
             float fcolor = color / 65535.0;
             imageStore(output_tex, pixel, vec4(fcolor, fcolor, fcolor, 1.0));
         }
-)";
+        )";
 
         GLuint cs = glCreateShader(GL_COMPUTE_SHADER);
         glShaderSource(cs, 1, &cs_src, nullptr);
@@ -292,14 +301,34 @@ void OpenglComputeShaderFramer::next_frame()
         ImGui::Image((ImTextureID)(intptr_t)color_table_tex, ImVec2(256, 256), ImVec2(0, 1), ImVec2(1, 0));
     ImGui::End();
 
-    ImGui::Begin("3D Texture Preview");
-    static int axis = 2; // 默认 z 方向
-    static float slice = 0.5f;
-    ImGui::SliderInt("Axis", &axis, 0, 2);
-    ImGui::SliderFloat("Slice", &slice, 0.0f, 1.0f);
+    static texture_t selected_preview_tex = 0;
 
-    GLuint preview_tex = render_3d_texture_preview(vol_le_tex, axis, slice, 256, 256);
-    ImGui::Image((ImTextureID)(intptr_t)preview_tex, ImVec2(256, 256), ImVec2(0, 1), ImVec2(1, 0));
+    {
+        ImGui::Begin("3D Texture List", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        global::onlyone::call<texture_pool>([&](texture_pool& pool) {
+            for (const auto& tex : pool)
+            {
+                if (ImGui::Button(fmt::format("Texture {}", tex).c_str()))
+                {
+                    selected_preview_tex = tex;
+                }
+            }
+            return true;
+        });
+        ImGui::End();
+    }
+
+    ImGui::Begin("3D Texture Preview");
+    static int preview_axis = 2; // 默认 z 方向
+    static float preview_slice = 0.5f;
+    ImGui::SliderInt("Axis", &preview_axis, 0, 2);
+    ImGui::SliderFloat("Slice", &preview_slice, 0.0f, 1.0f);
+
+    if (selected_preview_tex != 0)
+    {
+        GLuint preview_tex = render_3d_texture_preview(selected_preview_tex, preview_axis, preview_slice, 640, 640);
+        ImGui::Image((ImTextureID)(intptr_t)preview_tex, ImVec2(640, 640), ImVec2(0, 1), ImVec2(1, 0));
+    }
     ImGui::End();
 
     ImGui::Begin("Compute Shader Performance", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
