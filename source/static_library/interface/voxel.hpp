@@ -1,5 +1,6 @@
 #pragma once
 #include <mdspan>
+#include <span>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -19,6 +20,17 @@ template <typename T> static inline voxel<T> make_voxel(glm::ivec3 size)
     vox.size = size;
     vox.memory.resize(size.x * size.y * size.z);
     vox.view = std::mdspan<T, std::dextents<int, 3>>(vox.memory.data(), size.z, size.y, size.x);
+    return vox;
+}
+
+template <typename T> static inline voxel<T> make_voxel(glm::ivec3 size, std::span<T> source)
+{
+    voxel<T> vox;
+    vox.size = size;
+    vox.memory.resize(size.x * size.y * size.z);
+    vox.view = std::mdspan<T, std::dextents<int, 3>>(vox.memory.data(), size.z, size.y, size.x);
+    size_t copy_size = std::min(source.size(), vox.memory.size());
+    std::copy_n(source.data(), copy_size, vox.memory.data());
     return vox;
 }
 
