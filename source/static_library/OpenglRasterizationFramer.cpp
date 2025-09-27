@@ -71,6 +71,94 @@ static inline bool check_link_errors(program_t program, std::source_location loc
     }
     return true;
 }
+static inline GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width, int height, bool force_update = false)
+{
+
+    static GLuint program = 0;
+    static GLuint output_tex = 0;
+    static int last_preview_axis = -1;
+    static float last_preview_slice = -1.0f;
+
+    bool is_changed = (axis != last_preview_axis) || (std::abs(slice - last_preview_slice) > 0.001f);
+    if (!is_changed && !force_update)
+        return output_tex;
+
+    last_preview_axis = axis;
+    last_preview_slice = slice;
+
+    if (program == 0)
+    {
+        const char* cs_src = R"(
+        #version 430
+        layout (local_size_x = 16, local_size_y = 16) in;
+
+        layout (rgba8, binding = 0) writeonly uniform image2D output_tex;
+        uniform usampler3D tex3d;
+        uniform int axis;   // 0=x, 1=y, 2=z
+        uniform float slice; // 0~1
+
+        void main() {
+            ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+            ivec2 size2d = imageSize(output_tex);
+            if (pixel.x >= size2d.x || pixel.y >= size2d.y)
+                return;
+
+            vec2 uv = vec2(pixel) / vec2(size2d);
+
+            vec3 coord;
+            if (axis == 0)       coord = vec3(slice, uv);
+            else if (axis == 1)  coord = vec3(uv.x, slice, uv.y);
+            else                 coord = vec3(uv, slice);
+
+            uint color = texture(tex3d, coord).r;
+            float fcolor = color / 255.0;
+            imageStore(output_tex, pixel, vec4(fcolor, fcolor, fcolor, 1.0));
+        }
+        )";
+
+        GLuint cs = glCreateShader(GL_COMPUTE_SHADER);
+        glShaderSource(cs, 1, &cs_src, nullptr);
+        glCompileShader(cs);
+        GLint success;
+        glGetShaderiv(cs, GL_COMPILE_STATUS, &success);
+        if (!success)
+        {
+            char log[1024];
+            glGetShaderInfoLog(cs, 1024, nullptr, log);
+            SPDLOG_ERROR("Compute Shader Error: {}", log);
+        }
+
+        program = glCreateProgram();
+        glAttachShader(program, cs);
+        glLinkProgram(program);
+        glDeleteShader(cs);
+    }
+
+    if (output_tex == 0)
+    {
+        glGenTextures(1, &output_tex);
+        glBindTexture(GL_TEXTURE_2D, output_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    glUseProgram(program);
+
+    glBindImageTexture(0, output_tex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, tex3d);
+    glUniform1i(glGetUniformLocation(program, "tex3d"), 0);
+    glUniform1i(glGetUniformLocation(program, "axis"), axis);
+    glUniform1f(glGetUniformLocation(program, "slice"), slice);
+
+    glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+    return output_tex;
+}
 
 struct camera_info
 {
@@ -360,94 +448,6 @@ void init()
     glBindBuffer(GL_ARRAY_BUFFER, vertices_buffer_object);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-}
-static inline GLuint render_3d_texture_preview(GLuint tex3d, int axis, float slice, int width, int height, bool force_update = false)
-{
-
-    static GLuint program = 0;
-    static GLuint output_tex = 0;
-    static int last_preview_axis = -1;
-    static float last_preview_slice = -1.0f;
-
-    bool is_changed = (axis != last_preview_axis) || (std::abs(slice - last_preview_slice) > 0.001f);
-    if (!is_changed && !force_update)
-        return output_tex;
-
-    last_preview_axis = axis;
-    last_preview_slice = slice;
-
-    if (program == 0)
-    {
-        const char* cs_src = R"(
-        #version 430
-        layout (local_size_x = 16, local_size_y = 16) in;
-
-        layout (rgba8, binding = 0) writeonly uniform image2D output_tex;
-        uniform usampler3D tex3d;
-        uniform int axis;   // 0=x, 1=y, 2=z
-        uniform float slice; // 0~1
-
-        void main() {
-            ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-            ivec2 size2d = imageSize(output_tex);
-            if (pixel.x >= size2d.x || pixel.y >= size2d.y)
-                return;
-
-            vec2 uv = vec2(pixel) / vec2(size2d);
-
-            vec3 coord;
-            if (axis == 0)       coord = vec3(slice, uv);
-            else if (axis == 1)  coord = vec3(uv.x, slice, uv.y);
-            else                 coord = vec3(uv, slice);
-
-            uint color = texture(tex3d, coord).r;
-            float fcolor = color / 255.0;
-            imageStore(output_tex, pixel, vec4(fcolor, fcolor, fcolor, 1.0));
-        }
-        )";
-
-        GLuint cs = glCreateShader(GL_COMPUTE_SHADER);
-        glShaderSource(cs, 1, &cs_src, nullptr);
-        glCompileShader(cs);
-        GLint success;
-        glGetShaderiv(cs, GL_COMPILE_STATUS, &success);
-        if (!success)
-        {
-            char log[1024];
-            glGetShaderInfoLog(cs, 1024, nullptr, log);
-            SPDLOG_ERROR("Compute Shader Error: {}", log);
-        }
-
-        program = glCreateProgram();
-        glAttachShader(program, cs);
-        glLinkProgram(program);
-        glDeleteShader(cs);
-    }
-
-    if (output_tex == 0)
-    {
-        glGenTextures(1, &output_tex);
-        glBindTexture(GL_TEXTURE_2D, output_tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-
-    glUseProgram(program);
-
-    glBindImageTexture(0, output_tex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_3D, tex3d);
-    glUniform1i(glGetUniformLocation(program, "tex3d"), 0);
-    glUniform1i(glGetUniformLocation(program, "axis"), axis);
-    glUniform1f(glGetUniformLocation(program, "slice"), slice);
-
-    glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-    return output_tex;
 }
 
 void update()
