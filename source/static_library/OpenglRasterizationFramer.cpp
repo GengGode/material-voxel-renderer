@@ -381,12 +381,81 @@ void init()
         pool.insert(vol_tex);
         return true;
     });
+}
+void update()
+{
+    // ImGui::SetNextWindowSize(ImVec2(820, 620), ImGuiCond_Once);
+    ImGui::Begin("Preview", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    if (render_texture != 0)
+        ImGui::Image((ImTextureID)(intptr_t)render_texture, ImVec2(view_width, view_height), ImVec2(0, 1), ImVec2(1, 0));
+    ImGui::End();
+    static texture_t selected_preview_tex = 0;
+    bool force_update = false;
+    {
+        ImGui::Begin("3D Texture List", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        global::onlyone::call<texture_pool>([&](texture_pool& pool) {
+            for (const auto& tex : pool)
+            {
+                if (ImGui::Button(fmt::format("Texture {}", tex).c_str()))
+                {
+                    selected_preview_tex = tex;
+                    force_update = true;
+                }
+            }
+            return true;
+        });
+        ImGui::End();
+    }
 
-    float vertices[] = { -0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f };
-    unsigned int vertices_buffer_object;
-    glGenBuffers(1, &vertices_buffer_object);
-    glBindBuffer(GL_ARRAY_BUFFER, vertices_buffer_object);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    ImGui::Begin("3D Texture Preview");
+    static int preview_axis = 2; // 默认 z 方向
+    static float preview_slice = 0.5f;
+    ImGui::SliderInt("Axis", &preview_axis, 0, 2);
+    ImGui::SliderFloat("Slice", &preview_slice, 0.0f, 1.0f);
+
+    if (selected_preview_tex != 0)
+    {
+        GLuint preview_tex = render_3d_texture_preview(selected_preview_tex, preview_axis, preview_slice, 640, 640, force_update);
+        ImGui::Image((ImTextureID)(intptr_t)preview_tex, ImVec2(640, 640), ImVec2(0, 1), ImVec2(1, 0));
+    }
+    ImGui::End();
+}
+void uninit() {}
+
+int OpenglRasterizationFramer::initialize()
+{
+    // 立方体顶点（位置 + 纹理坐标）
+    // 位置(x, y, z)         // 纹理坐标(u, v)
+    // 前面
+    float cube_vertices[] = {
+        -0.5f, -0.5f, 0.5f,  0.0f, 0.0f, 0.5f, -0.5f, 0.5f,  1.0f, 0.0f, 0.5f, 0.5f, 0.5f,  1.0f, 1.0f, -0.5f, 0.5f, 0.5f,  0.0f, 1.0f,
+        -0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.5f, -0.5f, 0.0f, 1.0f, -0.5f, 0.5f, -0.5f, 1.0f, 1.0f,
+    };
+    // 前面
+    // 右面
+    // 后面
+    // 左面
+    // 上面
+    // 下面
+    unsigned int cube_indices[] = { 0, 1, 2, 2, 3, 0, 1, 5, 6, 6, 2, 1, 5, 4, 7, 7, 6, 5, 4, 0, 3, 3, 7, 4, 3, 2, 6, 6, 7, 3, 4, 5, 1, 1, 0, 4 };
+    unsigned int vertex_buffer_object = 0;
+    unsigned int element_buffer_object = 0;
+    unsigned int vertex_array_object = 0;
+    glGenVertexArrays(1, &vertex_array_object);
+    glGenBuffers(1, &vertex_buffer_object);
+    glGenBuffers(1, &element_buffer_object);
+    glBindVertexArray(vertex_array_object);
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cube_vertices), cube_vertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cube_indices), cube_indices, GL_STATIC_DRAW);
+    // 位置属性
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    // 纹理坐标属性
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    user_vertex_array_object = vertex_array_object;
 
     const char* vertex_shader_source = R"(
         #version 330 core
@@ -403,13 +472,6 @@ void init()
             ver_TexCoord = texcoord;
         }
     )";
-    shader_t vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertex_shader, 1, &vertex_shader_source, nullptr);
-    glCompileShader(vertex_shader);
-    if (!check_compile_errors(vertex_shader))
-        return;
-
-    // texture_t color_table_texture = texture_from(color_table);
     const char* fragment_shader_source = R"(
         #version 410 core
         uniform float time;
@@ -425,36 +487,53 @@ void init()
         }
     )";
 
+    shader_t vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertex_shader, 1, &vertex_shader_source, nullptr);
+    glCompileShader(vertex_shader);
+    if (!check_compile_errors(vertex_shader))
+        return code_err("Vertex shader compilation failed");
+
     shader_t fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fragment_shader, 1, &fragment_shader_source, nullptr);
     glCompileShader(fragment_shader);
     if (!check_compile_errors(fragment_shader))
-        return;
+        return code_err("Fragment shader compilation failed");
 
     user_program = glCreateProgram();
     glAttachShader(user_program, vertex_shader);
     glAttachShader(user_program, fragment_shader);
     glLinkProgram(user_program);
     if (!check_link_errors(user_program))
-        return;
+        return code_err("Shader program linking failed");
     glDeleteShader(vertex_shader);
     glDeleteShader(fragment_shader);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+    glGenFramebuffers(1, &user_framebuffer_id);
+    glBindFramebuffer(GL_FRAMEBUFFER, user_framebuffer_id);
 
-    glGenVertexArrays(1, &user_vertex_array_object);
-    glBindVertexArray(user_vertex_array_object);
-    glBindBuffer(GL_ARRAY_BUFFER, vertices_buffer_object);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+    glGenTextures(1, &render_texture);
+    glBindTexture(GL_TEXTURE_2D, render_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, view_width, view_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, render_texture, 0);
+    if (GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER); status != GL_FRAMEBUFFER_COMPLETE)
+        return code_err("Framebuffer is not complete! (status: {})", (int)status);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    init();
+
+    return 0;
 }
 
-void update()
+void OpenglRasterizationFramer::next_frame()
 {
-    static float time = 0.0f;
-    time += 0.01f;
+    glBindFramebuffer(GL_FRAMEBUFFER, user_framebuffer_id);
+    glViewport(0, 0, view_width, view_height);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // 这里画你的 OpenGL 三角形、场景
     static camera_info cam;
     cam.aspect_ratio = static_cast<float>(view_width) / static_cast<float>(view_height);
     // cam.look_at(glm::vec3(0.0f, 0.0f, 0.0f));
@@ -502,86 +581,13 @@ void update()
     glBindVertexArray(user_vertex_array_object);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
-void uninit()
+
+void OpenglRasterizationFramer::destroy()
 {
     if (user_vertex_array_object != 0)
         glDeleteVertexArrays(1, &user_vertex_array_object);
     if (user_program != 0)
         glDeleteProgram(user_program);
-}
-
-int OpenglRasterizationFramer::initialize()
-{
-    glGenFramebuffers(1, &user_framebuffer_id);
-    glBindFramebuffer(GL_FRAMEBUFFER, user_framebuffer_id);
-
-    glGenTextures(1, &render_texture);
-    glBindTexture(GL_TEXTURE_2D, render_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, view_width, view_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, render_texture, 0);
-    if (GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER); status != GL_FRAMEBUFFER_COMPLETE)
-        return code_err("Framebuffer is not complete! (status: {})", (int)status);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    init();
-
-    return 0;
-}
-
-void OpenglRasterizationFramer::next_frame()
-{
-    glBindFramebuffer(GL_FRAMEBUFFER, user_framebuffer_id);
-    glViewport(0, 0, view_width, view_height);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // 这里画你的 OpenGL 三角形、场景
-    update();
-
-    // 回到默认 framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    // ImGui::SetNextWindowSize(ImVec2(820, 620), ImGuiCond_Once);
-    ImGui::Begin("Preview", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    if (render_texture != 0)
-        ImGui::Image((ImTextureID)(intptr_t)render_texture, ImVec2(view_width, view_height), ImVec2(0, 1), ImVec2(1, 0));
-    ImGui::End();
-    static texture_t selected_preview_tex = 0;
-    bool force_update = false;
-    {
-        ImGui::Begin("3D Texture List", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        global::onlyone::call<texture_pool>([&](texture_pool& pool) {
-            for (const auto& tex : pool)
-            {
-                if (ImGui::Button(fmt::format("Texture {}", tex).c_str()))
-                {
-                    selected_preview_tex = tex;
-                    force_update = true;
-                }
-            }
-            return true;
-        });
-        ImGui::End();
-    }
-
-    ImGui::Begin("3D Texture Preview");
-    static int preview_axis = 2; // 默认 z 方向
-    static float preview_slice = 0.5f;
-    ImGui::SliderInt("Axis", &preview_axis, 0, 2);
-    ImGui::SliderFloat("Slice", &preview_slice, 0.0f, 1.0f);
-
-    if (selected_preview_tex != 0)
-    {
-        GLuint preview_tex = render_3d_texture_preview(selected_preview_tex, preview_axis, preview_slice, 640, 640, force_update);
-        ImGui::Image((ImTextureID)(intptr_t)preview_tex, ImVec2(640, 640), ImVec2(0, 1), ImVec2(1, 0));
-    }
-    ImGui::End();
-}
-
-void OpenglRasterizationFramer::destroy()
-{
     uninit();
     if (render_texture != 0)
         glDeleteTextures(1, &render_texture);
