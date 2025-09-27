@@ -36,7 +36,7 @@ static pixel<uint32_t> color_table = make_pixel<uint32_t>({ 256, 256 });
 // attenuation coefficient
 static voxel<uint16_t> vol_le = make_voxel<uint16_t>({ 64, 64, 64 });
 static voxel<uint16_t> vol_he = make_voxel<uint16_t>({ 64, 64, 64 });
-static voxel<uint8_t> vol = make_voxel<uint8_t>({ 64, 64, 64 });
+static voxel<uint16_t> vol = make_voxel<uint16_t>({ 64, 64, 64 });
 
 static uint16_t view_width = 800;
 static uint16_t view_height = 600;
