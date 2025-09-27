@@ -93,7 +93,7 @@ struct camera_info
     // 摄像机lookAt矩阵
     glm::mat4 view() const { return glm::lookAt(position, position + front(), up()); }
     // 摄像机投影矩阵
-    glm::mat4 projection() const { return glm::perspective(fov, aspect_ratio, 0.1f, 100.0f); }
+    glm::mat4 projection() const { return glm::perspective(fov, aspect_ratio, 0.1f, 1000.0f); }
     // 通过鼠标移动摄像机位置
     void rotate_from_mouse(int mouse_dx, int mouse_dy, float sensitivity = 0.005f)
     {
