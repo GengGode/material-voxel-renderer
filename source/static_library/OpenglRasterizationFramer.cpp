@@ -276,6 +276,12 @@ void init()
     rand_memory(vol_he.memory);
     rand_memory(vol.memory);
 
+    auto buffer = load_raw_file("foot.raw");
+    std::vector<uint16_t> buffer16(buffer.size());
+    for (size_t i = 0; i < buffer.size(); ++i)
+        buffer16[i] = static_cast<uint16_t>(buffer[i]) << 8;
+    vol = make_voxel<uint16_t>({ 256, 256, 256 }, buffer16);
+
     color_table_tex = texture_from(color_table);
     vol_le_tex = texture_from(vol_le);
     vol_he_tex = texture_from(vol_he);
@@ -284,6 +290,7 @@ void init()
     global::onlyone::call<texture_pool>([&](texture_pool& pool) {
         pool.insert(vol_le_tex);
         pool.insert(vol_he_tex);
+        pool.insert(vol_tex);
         return true;
     });
 
