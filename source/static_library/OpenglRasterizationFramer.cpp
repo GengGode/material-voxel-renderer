@@ -375,36 +375,7 @@ void OpenglRasterizationFramer::next_frame()
     // cam.look_at(glm::vec3(0.0f, 0.0f, 0.0f));
     cam.status.mouse_controls(ImGui::GetIO(), cam);
     cam.status.keyboard_controls(ImGui::GetIO(), cam);
-    ImGui::Begin("Camera Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::Text("位置: (%.2f, %.2f, %.2f)", cam.position.x, cam.position.y, cam.position.z);
-    ImGui::Text("前向: (%.2f, %.2f, %.2f)", cam.front().x, cam.front().y, cam.front().z);
-    ImGui::Text("上方: (%.2f, %.2f, %.2f)", cam.up().x, cam.up().y, cam.up().z);
-    ImGui::Text("右侧: (%.2f, %.2f, %.2f)", cam.right().x, cam.right().y, cam.right().z);
-    ImGui::Text("视点目标距离: %.2f", cam.target_distance);
-    ImGui::Text("FOV: %.2f °", glm::degrees(cam.fov));
-    ImGui::Text("宽高比: %.2f", cam.aspect_ratio);
-    ImGui::Separator();
-    ImGui::Checkbox("旋转摄像机(右键拖拽)", &cam.status.is_rotating);
-    ImGui::Checkbox("环绕目标点旋转摄像机(左键拖拽)", &cam.status.is_orbiting);
-    ImGui::Checkbox("视线方向推拉摄像机(中键拖拽)", &cam.status.is_zooming);
-    ImGui::SliderFloat("移动灵敏度", &cam.status.move_sensitivity, 0.001f, 0.02f);
-    ImGui::SliderFloat("视线方向推拉灵敏度", &cam.status.scroll_sensitivity, 0.01f, 0.2f);
-    ImGui::SliderFloat("滚轮调整FOV灵敏度", &cam.status.zoom_sensitivity, 0.01f, 0.2f);
-
-    if (ImGui::Button("Reset Camera"))
-    {
-        cam.position = glm::vec3(0.0f, 0.0f, 3.0f);
-        cam.orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        cam.target_distance = 3.0f;
-    }
-
-    ImGui::Text("使用说明:");
-    ImGui::Text("右键拖拽: 旋转摄像机");
-    ImGui::Text("左键拖拽: 环绕目标点旋转摄像机");
-    ImGui::Text("中键拖拽: 视线方向推拉摄像机");
-    ImGui::Text("滚轮: 调整视角大小(FOV)");
-
-    ImGui::End();
+    cam.status.show_ui(cam);
 
     glm::mat4 model = glm::mat4(1.0f);
 
