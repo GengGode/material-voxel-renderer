@@ -162,6 +162,8 @@ static inline GLuint render_3d_texture_preview(GLuint tex3d, int axis, float sli
 
 #include "camera_info.hpp"
 
+#include "load_raw_file.hpp"
+
 void init()
 {
     global::onlyone::create<texture_pool>();
