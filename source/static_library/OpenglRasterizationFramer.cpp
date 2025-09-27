@@ -425,18 +425,10 @@ void uninit() {}
 int OpenglRasterizationFramer::initialize()
 {
     // 立方体顶点（位置 + 纹理坐标）
-    // 位置(x, y, z)         // 纹理坐标(u, v)
-    // 前面
     float cube_vertices[] = {
         -0.5f, -0.5f, 0.5f,  0.0f, 0.0f, 0.5f, -0.5f, 0.5f,  1.0f, 0.0f, 0.5f, 0.5f, 0.5f,  1.0f, 1.0f, -0.5f, 0.5f, 0.5f,  0.0f, 1.0f,
         -0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.5f, -0.5f, 0.0f, 1.0f, -0.5f, 0.5f, -0.5f, 1.0f, 1.0f,
     };
-    // 前面
-    // 右面
-    // 后面
-    // 左面
-    // 上面
-    // 下面
     unsigned int cube_indices[] = { 0, 1, 2, 2, 3, 0, 1, 5, 6, 6, 2, 1, 5, 4, 7, 7, 6, 5, 4, 0, 3, 3, 7, 4, 3, 2, 6, 6, 7, 3, 4, 5, 1, 1, 0, 4 };
     unsigned int vertex_buffer_object = 0;
     unsigned int element_buffer_object = 0;
@@ -460,30 +452,63 @@ int OpenglRasterizationFramer::initialize()
     const char* vertex_shader_source = R"(
         #version 330 core
         layout (location = 0) in vec3 position;
-        layout (location = 1) in vec3 normal;
         layout (location = 2) in vec2 texcoord;
+        uniform mat4 model;
         uniform mat4 view;
         uniform mat4 projection;
-        out vec2 ver_TexCoord;
 
+        out vec2 ver_TexCoord;
+        out vec3 ver_FragPos; // 片段位置（世界空间）
+        
         void main()
         {
-            gl_Position = projection * view * vec4(position, 1.0);
+            gl_Position = projection * view * model * vec4(position, 1.0);
             ver_TexCoord = texcoord;
+            ver_FragPos = vec3(model * vec4(position, 1.0));
         }
     )";
     const char* fragment_shader_source = R"(
         #version 410 core
-        uniform float time;
-        uniform sampler2D color_table_texture;
-        out vec4 FragColor;
+        uniform usampler3D volume1_tex;
+        uniform vec3 camera_position;
 
         in vec2 ver_TexCoord;
+        in vec3 ver_FragPos;
+        out vec4 FragColor;
+
+        struct ray {
+            vec3 direction;
+            vec3 position;
+            float value;
+            int count;
+        };
 
         void main()
         {
-            float brightness = time - floor(time);
-            FragColor = vec4(vec3(ver_TexCoord, 0.2) * brightness, 1.0);
+            if (gl_FrontFacing == false)
+                discard;
+
+            ray r;
+            r.direction = normalize(ver_FragPos - camera_position);
+            r.position = ver_FragPos;
+            r.value = 0.0;
+            r.count = 0;
+            for (int i = 0; i < 10000; i++)
+            {
+                vec3 coord = r.position + r.direction * float(i) * 0.005;
+                if (any(lessThan(coord, vec3(-0.5))) || any(greaterThan(coord, vec3(0.5))))
+                    break;
+                vec3 tex_coord = coord + vec3(0.5);
+                uint intensity = texture(volume1_tex, tex_coord).r;
+                float alpha = float(intensity) / 256.0;
+                if (alpha < 0.01)
+                    continue;
+
+                r.count++;
+                r.value = r.value + (alpha - r.value) / float(r.count);
+            }
+            
+            FragColor = vec4(vec3(r.value), 1.0);
         }
     )";
 
@@ -572,14 +597,20 @@ void OpenglRasterizationFramer::next_frame()
 
     glm::mat4 model = glm::mat4(1.0f);
 
-    glUniform1f(glGetUniformLocation(user_program, "time"), time);
-    glUniformMatrix4fv(glGetUniformLocation(user_program, "view"), 1, GL_FALSE, glm::value_ptr(cam.view()));
-    glUniformMatrix4fv(glGetUniformLocation(user_program, "model"), 1, GL_FALSE, glm::value_ptr(model));
-    glUniformMatrix4fv(glGetUniformLocation(user_program, "projection"), 1, GL_FALSE, glm::value_ptr(cam.projection()));
-
     glUseProgram(user_program);
+    glUniformMatrix4fv(glGetUniformLocation(user_program, "model"), 1, GL_FALSE, glm::value_ptr(model));
+    glUniformMatrix4fv(glGetUniformLocation(user_program, "view"), 1, GL_FALSE, glm::value_ptr(cam.view()));
+    glUniformMatrix4fv(glGetUniformLocation(user_program, "projection"), 1, GL_FALSE, glm::value_ptr(cam.projection()));
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, vol_le_tex);
+    glUniform1i(glGetUniformLocation(user_program, "volume1_tex"), 0);
+    glUniform3fv(glGetUniformLocation(user_program, "camera_position"), 1, glm::value_ptr(cam.position));
+
     glBindVertexArray(user_vertex_array_object);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    update();
 }
 
 void OpenglRasterizationFramer::destroy()
