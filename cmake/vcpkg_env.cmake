@@ -1,11 +1,15 @@
 # configure the vcpkg toolchain file
 macro(set_vcpkg_config)
+    if (VCPKG_INSTALLED)
+        set(VCPKG_MANIFEST_INSTALL OFF)
+    endif()
     set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+    set(VCPKG_SKIP_DEPENDENCY_CHECK ON CACHE BOOL "Skip vcpkg dependency check" FORCE)
+    set(VCPKG_APPLOCAL_DEPS ON CACHE BOOL "Enable applocal deps")
+    set(VCPKG_MANIFEST_INSTALL OFF CACHE BOOL "Enable manifest install")
     set(VCPKG_MANIFEST_MODE ON CACHE BOOL "Manifest mode")  
     set(VCPKG_MANIFEST_DIR ${CMAKE_SOURCE_DIR} CACHE PATH "Manifest directory")
     set(VCPKG_TARGET_TRIPLET $ENV{VCPKG_TARGET_TRIPLET} CACHE STRING "Vcpkg target triplet")
-    set(VCPKG_MANIFEST_INSTALL ON CACHE BOOL "Enable manifest install")
-    set(VCPKG_APPLOCAL_DEPS ON CACHE BOOL "Enable applocal deps")
     set(VCPKG_INSTALLED_DIR ${CMAKE_BINARY_DIR}/vcpkg_installed)
 endmacro(set_vcpkg_config)
 
@@ -37,5 +41,14 @@ else()
         message(STATUS "VCPKG_TARGET_TRIPLET found in the environment: ${VCPKG_TARGET_TRIPLET}")
     endif()
 endif()
-    
+
+# check vcpkg_installed directory
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/vcpkg_installed")
+    message(STATUS "vcpkg_installed directory not found, configuring vcpkg...")
+    set(VCPKG_INSTALLED OFF)
+else()
+    set(VCPKG_INSTALLED ON)
+    message(STATUS "vcpkg_installed directory found, skipping vcpkg configuration.")
+endif()
+
 set_vcpkg_config()
