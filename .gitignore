@@ -2,3 +2,4 @@
 .vcpkg-target-triplet
 /.vscode
 /build
+source/static_library/img.h

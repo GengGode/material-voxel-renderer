@@ -69,9 +69,31 @@ static inline bool check_link_errors(program_t program, std::source_location loc
 
 using texture_pool = std::set<texture_t>;
 
+#include "img.h"
 void compute_shader_init()
 {
     global::onlyone::create<texture_pool>();
+
+#if 1
+    auto color_ret = read_color_table("dr_color_table.bmp");
+    if (not color_ret.has_value())
+    {
+        SPDLOG_ERROR("load color table failed: {}", color_ret.error());
+        return;
+    }
+    auto& color = color_ret.value();
+    color_table = make_pixel<uint32_t>({ color.width, color.height }, std::span<uint32_t>((uint32_t*)color.table.data(), color.table.size() / 4));
+
+    auto original_volumes_ret = get_original_volume("CT", nullptr);
+    if (not original_volumes_ret.has_value())
+    {
+        SPDLOG_ERROR("load volume failed: {}", original_volumes_ret.error());
+        return;
+    }
+    auto& original_vol = original_volumes_ret.value();
+    vol_le = make_voxel<uint16_t>({ original_vol->miu.width, original_vol->miu.height, original_vol->miu.slices }, original_vol->miu.data);
+    vol_he = make_voxel<uint16_t>({ original_vol->zeff.width, original_vol->zeff.height, original_vol->zeff.slices }, original_vol->zeff.data);
+#endif
 
     color_table_tex = texture_from(color_table);
     vol_le_tex = texture_from(vol_le);

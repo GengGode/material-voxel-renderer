@@ -164,6 +164,8 @@ static inline GLuint render_3d_texture_preview(GLuint tex3d, int axis, float sli
 
 #include "load_raw_file.hpp"
 
+#include "img.h"
+
 void init()
 {
     global::onlyone::create<texture_pool>();
@@ -176,6 +178,26 @@ void init()
     rand_memory(vol_le.memory);
     rand_memory(vol_he.memory);
     rand_memory(vol.memory);
+#if 1
+    auto color_ret = read_color_table("dr_color_table.bmp");
+    if (not color_ret.has_value())
+    {
+        SPDLOG_ERROR("load color table failed: {}", color_ret.error());
+        return;
+    }
+    auto& color = color_ret.value();
+    color_table = make_pixel<uint32_t>({ color.width, color.height }, std::span<uint32_t>((uint32_t*)color.table.data(), color.table.size() / 4));
+
+    auto original_volumes_ret = get_original_volume("CT", nullptr);
+    if (not original_volumes_ret.has_value())
+    {
+        SPDLOG_ERROR("load volume failed: {}", original_volumes_ret.error());
+        return;
+    }
+    auto& original_vol = original_volumes_ret.value();
+    vol_le = make_voxel<uint16_t>({ original_vol->miu.width, original_vol->miu.height, original_vol->miu.slices }, original_vol->miu.data);
+    vol_he = make_voxel<uint16_t>({ original_vol->zeff.width, original_vol->zeff.height, original_vol->zeff.slices }, original_vol->zeff.data);
+#endif
 
     auto buffer = load_raw_file("foot.raw");
     std::vector<uint16_t> buffer16(buffer.size());
@@ -379,6 +401,8 @@ void OpenglRasterizationFramer::next_frame()
     cam.status.keyboard_controls(ImGui::GetIO(), cam);
     cam.status.show_ui(cam);
 
+    // auto normalize_factor = glm::normalize(glm::vec3(vol_le.size.x, vol_le.size.y, vol_le.size.z));
+    // glm::mat4 model = glm::scale(glm::mat4(1.0f), glm::vec3(normalize_factor.x, normalize_factor.y, normalize_factor.z));
     glm::mat4 model = glm::mat4(1.0f);
 
     glUseProgram(user_program);
